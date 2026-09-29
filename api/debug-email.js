@@ -1,8 +1,4 @@
 // TEMPORARY diagnostic endpoint — DELETE AFTER DEBUGGING.
-// Hits the real Gmail SMTP transporter (same code path as bookings) and
-// returns the full SMTP result/error as JSON, since Vercel runtime logs
-// are not accessible. Protected by a random token; recipient is fixed to
-// the owner address so it cannot be abused as an open relay.
 const { sendOwnerNotification, sendCustomerRequestReceived } = require("./_lib/email");
 
 const DEBUG_TOKEN = "136cdd46bec5699833afdc32000628383431ffbeb9706ead";
@@ -46,5 +42,11 @@ module.exports = async (req, res) => {
       };
     }
   });
+  out.env = {
+    GMAIL_USER_set: !!process.env.GMAIL_USER,
+    GMAIL_APP_PASSWORD_set: !!process.env.GMAIL_APP_PASSWORD,
+    OWNER_EMAIL_set: !!process.env.OWNER_EMAIL,
+    OWNER_EMAIL_value: process.env.OWNER_EMAIL || null,
+  };
   res.status(200).json(out);
 };
