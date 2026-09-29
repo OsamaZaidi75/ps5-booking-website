@@ -1,0 +1,13 @@
+{
+  "name": "ps5-arena",
+  "private": true,
+  "version": "1.0.0",
+  "description": "PS5 Arena booking site — Vercel serverless API + Supabase",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "resend": "^4.0.1"
+  }
+}
