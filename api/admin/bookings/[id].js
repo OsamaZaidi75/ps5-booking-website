@@ -49,8 +49,13 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  // Notify the customer of the status change. Fire-and-forget — email
-  // failures must never break the admin action, the DB is already updated.
+  // Respond immediately — the DB is already updated, so a slow/hanging
+  // SMTP attempt must never delay or break the admin action's response.
+  res.status(200).json(data);
+
+  // Notify the customer of the status change after responding. Errors are
+  // logged inside sendCustomerConfirmed/sendCustomerCancelled and here —
+  // they can never affect the admin action, which already succeeded.
   try {
     if (status === 'confirmed') {
       await sendCustomerConfirmed(data);
@@ -58,8 +63,6 @@ module.exports = async function handler(req, res) {
       await sendCustomerCancelled(data);
     }
   } catch (err) {
-    console.error('Admin status-change email failed:', err.message);
+    console.error(`Admin status-change email failed for ${data.booking_ref}:`, err.message);
   }
-
-  res.status(200).json(data);
 };

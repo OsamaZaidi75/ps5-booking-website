@@ -82,13 +82,15 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  try {
-    await sendCustomerCancelled({ ...booking, status: 'cancelled' });
-  } catch (err) {
-    console.error('Customer cancellation email failed:', err.message);
-  }
-
+  // Respond immediately — the cancellation is already saved, so a
+  // slow/hanging SMTP attempt must never delay or break this page.
   res.status(200).setHeader('Content-Type', 'text/html').send(
     page('Booking cancelled', `Booking ${booking.booking_ref} has been cancelled. See you next time!`, true)
   );
+
+  try {
+    await sendCustomerCancelled({ ...booking, status: 'cancelled' });
+  } catch (err) {
+    console.error(`Customer cancellation email failed for ${booking.booking_ref}:`, err.message);
+  }
 };

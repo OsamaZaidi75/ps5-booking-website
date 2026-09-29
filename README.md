@@ -179,6 +179,25 @@ and cancel links work correctly.
   for Indian numbers) — see the commented hook in `api/_lib/sms.js` for
   wiring up a paid provider later.
 
+## Email reliability notes
+
+- Emails are always sent **after** the HTTP response is returned to the
+  client — a slow or hanging SMTP connection can never delay or fail a
+  booking, cancellation, or admin action. The booking/DB write is the
+  source of truth; email is best-effort on top of it.
+- The Gmail SMTP transporter has explicit `connectionTimeout` /
+  `greetingTimeout` / `socketTimeout` (8s each) plus a 9s hard outer
+  timeout per send, so a stalled connection fails fast instead of hanging
+  for the rest of the function's execution budget.
+- Every send attempt and failure is logged with the recipient, subject,
+  and (on failure) the full SMTP error details — check **Vercel →
+  Project → Logs** (or `vercel dev` output locally) if emails aren't
+  arriving; the exact rejection reason (auth failure, wrong port/TLS,
+  etc.) will be there.
+- `functions.maxDuration` in `vercel.json` is set to 20s (Hobby/free plans
+  support up to 60s) to give headroom for two emails sent in parallel on
+  top of the rate-limit/DB steps.
+
 ## Pricing
 
 ₹200/hour · 1–5 hours per session · pay at the lounge · free cancellation

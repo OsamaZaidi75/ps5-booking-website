@@ -110,19 +110,11 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  // Email failures must never break the booking response — the booking is
-  // already durably saved. Log and continue.
-  try {
-    await sendOwnerNotification(booking);
-  } catch (err) {
-    console.error('Owner notification email failed:', err.message);
-  }
-  try {
-    await sendCustomerRequestReceived(booking);
-  } catch (err) {
-    console.error('Customer request-received email failed:', err.message);
-  }
-
+  // Respond to the client immediately — the booking is already durably
+  // saved, so email delivery must never block or fail the HTTP response.
+  // Vercel's Node runtime keeps this invocation alive until the handler's
+  // promise settles (regardless of res already being sent), so we still
+  // await the sends below — but the browser is never waiting on them.
   res.status(201).json({
     id: booking.id,
     booking_ref: booking.booking_ref,
@@ -132,5 +124,21 @@ module.exports = async function handler(req, res) {
     end_time: booking.end_time,
     duration_hours: booking.duration_hours,
     status: booking.status,
+  });
+
+  // Fire both emails in parallel (not sequentially) so a slow/hanging SMTP
+  // attempt on one doesn't double the worst-case time before the other is
+  // even attempted. Each call already has its own internal timeout guard
+  // (see api/_lib/email.js) and logs its own success/failure — a rejection
+  // here is only ever a network/SMTP failure that's already been logged.
+  const results = await Promise.allSettled([
+    sendOwnerNotification(booking),
+    sendCustomerRequestReceived(booking),
+  ]);
+  results.forEach((result, i) => {
+    if (result.status === 'rejected') {
+      const label = i === 0 ? 'Owner notification' : 'Customer request-received';
+      console.error(`${label} email failed for ${booking.booking_ref}:`, result.reason?.message);
+    }
   });
 };

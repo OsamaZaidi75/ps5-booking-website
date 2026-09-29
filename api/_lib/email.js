@@ -5,25 +5,97 @@ const hmac = require('./hmac');
 // Uses a Gmail account + an "App Password" (not the account password) —
 // see .env.example / README for how to generate one. Lazily created and
 // cached so we only build the transport once per serverless invocation.
+const SMTP_HOST = 'smtp.gmail.com';
+const SMTP_PORT = 587;
+const SMTP_SECURE = false; // port 587 = STARTTLS (upgrade after connect), NOT implicit TLS
+
+// Connection/greeting/socket timeouts on the transporter itself. Without
+// these, a stalled TCP handshake or a server that never sends its SMTP
+// greeting can hang indefinitely — which is almost certainly what ate the
+// Vercel 10s function budget. 8s leaves headroom for the rest of the
+// request (rate limit + DB insert) inside that 10s cap.
+const SMTP_TIMEOUT_MS = 8000;
+
+// A hard external guard on top of the transporter's own timeouts, in case
+// nodemailer/the underlying socket doesn't honor them cleanly in every
+// failure mode. Set slightly above SMTP_TIMEOUT_MS.
+const SEND_HARD_TIMEOUT_MS = 9000;
+
 let transporter = null;
+
+/**
+ * Fails fast and loudly on a mismatched port/secure combination instead of
+ * silently hanging: port 465 requires implicit TLS (secure: true); port
+ * 587 (and 25) use STARTTLS, so secure must be false and STARTTLS must be
+ * negotiated after connecting (requireTLS below).
+ */
+function assertTlsConfig(port, secure) {
+  if (port === 465 && !secure) {
+    throw new Error('SMTP config error: port 465 requires secure:true (implicit TLS).');
+  }
+  if (port !== 465 && secure) {
+    throw new Error(`SMTP config error: port ${port} requires secure:false (STARTTLS), not implicit TLS.`);
+  }
+}
+
 function getTransporter() {
   if (transporter) return transporter;
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
   if (!user || !pass) throw new Error('Missing GMAIL_USER or GMAIL_APP_PASSWORD env var');
+
+  assertTlsConfig(SMTP_PORT, SMTP_SECURE);
+
   transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // STARTTLS on port 587 (not implicit TLS/465)
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,     // false => STARTTLS on 587 (true would mean implicit TLS on 465)
+    requireTLS: !SMTP_SECURE, // force the STARTTLS upgrade rather than risk plaintext or a silent hang
     auth: { user, pass },
+    connectionTimeout: SMTP_TIMEOUT_MS, // time allowed to establish the TCP connection
+    greetingTimeout: SMTP_TIMEOUT_MS,   // time allowed to wait for the SMTP greeting after connecting
+    socketTimeout: SMTP_TIMEOUT_MS,     // time of inactivity before the socket is killed
   });
   return transporter;
 }
 
+/** Rejects with a clear error if `promise` doesn't settle within `ms`. */
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Sends one email and logs the full outcome either way — recipient,
+ * subject, and (on failure) every field nodemailer/SMTP gives us, so
+ * failures show up in Vercel function logs instead of vanishing silently.
+ */
 async function sendMail({ to, subject, html }) {
   const from = process.env.GMAIL_USER;
-  const transport = getTransporter();
-  await transport.sendMail({ from: `PS5 Arena <${from}>`, to, subject, html });
+  console.log(`[email] Sending "${subject}" to ${to}`);
+  try {
+    const transport = getTransporter();
+    const info = await withTimeout(
+      transport.sendMail({ from: `PS5 Arena <${from}>`, to, subject, html }),
+      SEND_HARD_TIMEOUT_MS,
+      `Email send to ${to}`
+    );
+    console.log(`[email] Sent "${subject}" to ${to} — messageId=${info.messageId}`);
+    return info;
+  } catch (err) {
+    console.error(`[email] FAILED to send "${subject}" to ${to}:`, {
+      message: err.message,
+      code: err.code,
+      command: err.command,
+      response: err.response,
+      responseCode: err.responseCode,
+      stack: err.stack,
+    });
+    throw err;
+  }
 }
 
 function buildCancelUrl(bookingId) {
@@ -59,9 +131,10 @@ function cancelCta(booking) {
 async function sendOwnerNotification(booking) {
   const ownerEmail = process.env.OWNER_EMAIL;
   if (!ownerEmail) {
-    console.warn('OWNER_EMAIL not set — skipping owner email');
+    console.warn(`[email] OWNER_EMAIL not set — skipping owner notification for ${booking.booking_ref}`);
     return;
   }
+  console.log(`[email] Attempting owner notification for booking ${booking.booking_ref} -> ${ownerEmail}`);
   await sendMail({
     to: ownerEmail,
     subject: `New booking request ${booking.booking_ref} — ${booking.date} ${booking.start_time}`,
@@ -80,7 +153,11 @@ async function sendOwnerNotification(booking) {
  * even before the lounge confirms.
  */
 async function sendCustomerRequestReceived(booking) {
-  if (!booking.email) return;
+  if (!booking.email) {
+    console.log(`[email] Skipping request-received email for ${booking.booking_ref} — no customer email provided`);
+    return;
+  }
+  console.log(`[email] Attempting request-received email for booking ${booking.booking_ref} -> ${booking.email}`);
   await sendMail({
     to: booking.email,
     subject: `Request received — ${booking.booking_ref}`,
@@ -97,7 +174,11 @@ async function sendCustomerRequestReceived(booking) {
  * Emails the customer once the lounge has confirmed their booking.
  */
 async function sendCustomerConfirmed(booking) {
-  if (!booking.email) return;
+  if (!booking.email) {
+    console.log(`[email] Skipping confirmed email for ${booking.booking_ref} — no customer email provided`);
+    return;
+  }
+  console.log(`[email] Attempting confirmed email for booking ${booking.booking_ref} -> ${booking.email}`);
   await sendMail({
     to: booking.email,
     subject: `Booking confirmed — ${booking.booking_ref}`,
@@ -116,7 +197,11 @@ async function sendCustomerConfirmed(booking) {
  * /admin.
  */
 async function sendCustomerCancelled(booking) {
-  if (!booking.email) return;
+  if (!booking.email) {
+    console.log(`[email] Skipping cancelled email for ${booking.booking_ref} — no customer email provided`);
+    return;
+  }
+  console.log(`[email] Attempting cancelled email for booking ${booking.booking_ref} -> ${booking.email}`);
   await sendMail({
     to: booking.email,
     subject: `Booking cancelled — ${booking.booking_ref}`,
