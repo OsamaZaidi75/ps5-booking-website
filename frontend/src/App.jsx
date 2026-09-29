@@ -403,7 +403,7 @@ function App() {
           <div className="section-head">
             <p className="kicker">Booking</p>
             <h2>Lock your <em>session.</em></h2>
-            <p className="sub">Live availability · instant confirmation · pay at the lounge.</p>
+            <p className="sub">Live availability · instant confirmation · pay at the lounge · open daily 10:00–22:00 IST.</p>
           </div>
           <div className="booking-layout">
             <aside className="price-card">
@@ -414,7 +414,9 @@ function App() {
                 <li>✓ Extra Pass library</li>
                 <li>✓ 4K HDR display</li>
                 <li>✓ 1–5 hours per session</li>
+                <li>✓ Pay at the lounge, no prepayment</li>
                 <li>✓ Free cancellation before start</li>
+                <li>✓ Open daily, 10:00–22:00 IST</li>
               </ul>
               <div className="price-note">Weekend tip: book 2+ hours to skip the queue.</div>
             </aside>
@@ -470,7 +472,7 @@ function App() {
             <span className="brand-mark">◉</span>
             PS5&nbsp;Arena
           </div>
-          <p>Premium gaming lounge · Est. 2026 · Play more, wait less.</p>
+          <p>Premium gaming lounge · Open daily 10:00–22:00 IST · Play more, wait less.</p>
           <div className="footer-links">
             <button onClick={() => go('home')}>Home</button>
             <button onClick={() => go('games')}>Games</button>
