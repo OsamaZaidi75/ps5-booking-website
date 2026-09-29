@@ -223,7 +223,7 @@ function BookingForm({ games, onBookingCreated, apiUrl }) {
                 name="email"
                 value={formData.email}
                 onChange={handleChange}
-                placeholder="For a confirmation + cancel link"
+                placeholder="For booking updates + cancel link"
               />
               {errors.email && <span className="error">{errors.email}</span>}
             </div>
@@ -355,7 +355,7 @@ function BookingForm({ games, onBookingCreated, apiUrl }) {
         {errors.submit && <div className="error submit-error">{errors.submit}</div>}
 
         <button type="submit" className="submit-btn" disabled={submitting}>
-          {submitting ? 'Booking…' : 'Confirm Booking →'}
+          {submitting ? 'Sending request…' : 'Request Booking →'}
         </button>
       </form>
     </div>

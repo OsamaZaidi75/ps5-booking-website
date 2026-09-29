@@ -156,7 +156,7 @@ function AdminApp() {
             </thead>
             <tbody>
               {bookings.map((b) => (
-                <tr key={b.id}>
+                <tr key={b.id} className={b.status === 'pending' ? 'admin-row-pending' : ''}>
                   <td>{b.booking_ref}</td>
                   <td>{b.name}</td>
                   <td>{b.phone}</td>
@@ -166,10 +166,13 @@ function AdminApp() {
                   <td>{b.duration_hours}</td>
                   <td><StatusBadge status={b.status} /></td>
                   <td className="admin-actions">
-                    {b.status !== 'confirmed' && (
-                      <button onClick={() => updateStatus(b.id, 'confirmed')}>Confirm</button>
+                    {b.status === 'pending' && (
+                      <>
+                        <button onClick={() => updateStatus(b.id, 'confirmed')}>Confirm</button>
+                        <button className="admin-cancel" onClick={() => updateStatus(b.id, 'cancelled')}>Reject</button>
+                      </>
                     )}
-                    {b.status !== 'cancelled' && (
+                    {b.status === 'confirmed' && (
                       <button className="admin-cancel" onClick={() => updateStatus(b.id, 'cancelled')}>Cancel</button>
                     )}
                   </td>

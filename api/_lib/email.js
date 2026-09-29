@@ -1,10 +1,29 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 const hmac = require('./hmac');
 
-function getResend() {
-  const key = process.env.RESEND_API_KEY;
-  if (!key) throw new Error('Missing RESEND_API_KEY env var');
-  return new Resend(key);
+// ── Gmail SMTP transport (free) ─────────────────────────────────────────
+// Uses a Gmail account + an "App Password" (not the account password) —
+// see .env.example / README for how to generate one. Lazily created and
+// cached so we only build the transport once per serverless invocation.
+let transporter = null;
+function getTransporter() {
+  if (transporter) return transporter;
+  const user = process.env.GMAIL_USER;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  if (!user || !pass) throw new Error('Missing GMAIL_USER or GMAIL_APP_PASSWORD env var');
+  transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false, // STARTTLS on port 587 (not implicit TLS/465)
+    auth: { user, pass },
+  });
+  return transporter;
+}
+
+async function sendMail({ to, subject, html }) {
+  const from = process.env.GMAIL_USER;
+  const transport = getTransporter();
+  await transport.sendMail({ from: `PS5 Arena <${from}>`, to, subject, html });
 }
 
 function buildCancelUrl(bookingId) {
@@ -17,61 +36,94 @@ function buildCancelUrl(bookingId) {
   return `${base}/api/cancel?token=${encodeURIComponent(token)}`;
 }
 
+function cancelCta(booking) {
+  const cancelUrl = buildCancelUrl(booking.id);
+  return `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="text-align:center;">
+          <a href="${cancelUrl}" style="display:inline-block;padding:10px 22px;border-radius:999px;border:1px solid ${COLORS.border};color:${COLORS.muted};font-size:13px;text-decoration:none;">Cancel this booking</a>
+          <p style="margin:10px 0 0;color:${COLORS.muted};font-size:11px;">This cancellation link expires in 7 days.</p>
+        </td>
+      </tr>
+    </table>`;
+}
+
 /**
- * Emails the lounge owner full booking details. Fire-and-forget from the
- * caller's perspective, but errors are surfaced so /api/book can log them
- * without failing the booking itself (the booking is already saved).
+ * Emails the lounge owner full booking details for every new (pending)
+ * booking, so they can review and confirm/reject it in /admin.
+ * Fire-and-forget from the caller's perspective, but errors are surfaced
+ * so /api/book can log them without failing the booking itself (the
+ * booking is already saved).
  */
 async function sendOwnerNotification(booking) {
   const ownerEmail = process.env.OWNER_EMAIL;
-  const from = process.env.RESEND_FROM_EMAIL;
-  if (!ownerEmail || !from) {
-    console.warn('OWNER_EMAIL or RESEND_FROM_EMAIL not set — skipping owner email');
+  if (!ownerEmail) {
+    console.warn('OWNER_EMAIL not set — skipping owner email');
     return;
   }
-  const resend = getResend();
-  await resend.emails.send({
-    from,
+  await sendMail({
     to: ownerEmail,
-    subject: `New booking ${booking.booking_ref} — ${booking.date} ${booking.start_time}`,
+    subject: `New booking request ${booking.booking_ref} — ${booking.date} ${booking.start_time}`,
     html: renderEmailLayout({
-      heading: 'New booking received',
-      intro: 'A new session was just booked. Full details below.',
+      heading: 'New booking request — needs confirmation',
+      intro: 'A customer just requested a session. Review it and confirm or reject in the admin panel.',
       bodyHtml: bookingDetailsTable(booking),
     }),
   });
 }
 
 /**
- * Emails the customer their booking ref + a signed, expiring cancel link.
- * Only called when the customer supplied an email address.
+ * Emails the customer confirming their request was received and is
+ * pending lounge confirmation. Only sent when the customer supplied an
+ * email address. Includes the signed cancel link so they can back out
+ * even before the lounge confirms.
  */
-async function sendCustomerConfirmation(booking) {
+async function sendCustomerRequestReceived(booking) {
   if (!booking.email) return;
-  const from = process.env.RESEND_FROM_EMAIL;
-  if (!from) {
-    console.warn('RESEND_FROM_EMAIL not set — skipping customer email');
-    return;
-  }
-  const resend = getResend();
-  const cancelUrl = buildCancelUrl(booking.id);
-  await resend.emails.send({
-    from,
+  await sendMail({
+    to: booking.email,
+    subject: `Request received — ${booking.booking_ref}`,
+    html: renderEmailLayout({
+      heading: `Thanks, ${escapeHtml(booking.name)} — request received!`,
+      intro: 'Your session request has been sent to the lounge for confirmation. We\u2019ll email you again as soon as it\u2019s confirmed. Pay at the lounge — \u20b9200/hour, no prepayment needed.',
+      bodyHtml: bookingDetailsTable(booking),
+      ctaHtml: cancelCta(booking),
+    }),
+  });
+}
+
+/**
+ * Emails the customer once the lounge has confirmed their booking.
+ */
+async function sendCustomerConfirmed(booking) {
+  if (!booking.email) return;
+  await sendMail({
     to: booking.email,
     subject: `Booking confirmed — ${booking.booking_ref}`,
     html: renderEmailLayout({
       heading: `You're all set, ${escapeHtml(booking.name)}!`,
-      intro: 'Your PS5 Arena session is confirmed. Pay at the lounge — ₹200/hour, no prepayment needed.',
+      intro: 'Your PS5 Arena session has been confirmed by the lounge. Pay at the lounge — \u20b9200/hour, no prepayment needed.',
       bodyHtml: bookingDetailsTable(booking),
-      ctaHtml: `
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-          <tr>
-            <td style="text-align:center;">
-              <a href="${cancelUrl}" style="display:inline-block;padding:10px 22px;border-radius:999px;border:1px solid ${COLORS.border};color:${COLORS.muted};font-size:13px;text-decoration:none;">Cancel this booking</a>
-              <p style="margin:10px 0 0;color:${COLORS.muted};font-size:11px;">This cancellation link expires in 7 days.</p>
-            </td>
-          </tr>
-        </table>`,
+      ctaHtml: cancelCta(booking),
+    }),
+  });
+}
+
+/**
+ * Emails the customer when their booking is cancelled — either by
+ * themselves (cancel link), or by the lounge rejecting/cancelling it in
+ * /admin.
+ */
+async function sendCustomerCancelled(booking) {
+  if (!booking.email) return;
+  await sendMail({
+    to: booking.email,
+    subject: `Booking cancelled — ${booking.booking_ref}`,
+    html: renderEmailLayout({
+      heading: `Booking cancelled`,
+      intro: `Your session ${escapeHtml(booking.booking_ref)} has been cancelled. If this wasn't you, or you'd like to rebook, just head back to the site.`,
+      bodyHtml: bookingDetailsTable(booking),
     }),
   });
 }
@@ -171,4 +223,10 @@ function bookingDetailsTable(booking) {
   return rows.join('');
 }
 
-module.exports = { sendOwnerNotification, sendCustomerConfirmation, buildCancelUrl };
+module.exports = {
+  sendOwnerNotification,
+  sendCustomerRequestReceived,
+  sendCustomerConfirmed,
+  sendCustomerCancelled,
+  buildCancelUrl,
+};

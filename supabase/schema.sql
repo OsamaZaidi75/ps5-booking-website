@@ -18,7 +18,10 @@ create table if not exists bookings (
   start_time time not null,
   duration_hours smallint not null check (duration_hours between 1 and 5),
   end_time time not null,
-  status text not null default 'confirmed' check (status in ('pending', 'confirmed', 'cancelled')),
+  -- New bookings start as 'pending' and require manual lounge confirmation
+  -- via /admin. Both 'pending' and 'confirmed' bookings block the slot
+  -- (see the EXCLUDE constraint below); only 'cancelled' frees it up.
+  status text not null default 'pending' check (status in ('pending', 'confirmed', 'cancelled')),
   selected_games jsonb,             -- optional, extends the requested schema to keep the game-picker UX
   created_at timestamptz not null default now(),
   -- Naive (timezone-less) timestamps combining date + time. Every booking
@@ -32,10 +35,17 @@ create table if not exists bookings (
 create index if not exists bookings_date_idx on bookings (date);
 create index if not exists bookings_status_idx on bookings (status);
 
+-- Migration safety: if this table already existed with the old default of
+-- 'confirmed' (pre manual-approval flow), flip the default going forward.
+-- Existing rows are left untouched — only new inserts are affected.
+alter table bookings alter column status set default 'pending';
+
 -- Atomic, race-condition-proof overlap prevention: two non-cancelled
--- bookings can never have overlapping [starts_at, ends_at) ranges. This is
--- enforced by Postgres itself at INSERT time (raises error 23P01), so no
--- amount of concurrent requests can ever double-book a slot.
+-- bookings (i.e. 'pending' or 'confirmed') can never have overlapping
+-- [starts_at, ends_at) ranges. This is enforced by Postgres itself at
+-- INSERT/UPDATE time (raises error 23P01), so no amount of concurrent
+-- requests can ever double-book a slot, and a pending booking blocks the
+-- slot exactly like a confirmed one until it's cancelled/rejected.
 do $$
 begin
   if not exists (

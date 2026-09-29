@@ -2,6 +2,7 @@ const { applyCors, getClientIp } = require('./_lib/cors');
 const { checkRateLimit } = require('./_lib/rateLimit');
 const { getSupabase } = require('./_lib/supabase');
 const hmac = require('./_lib/hmac');
+const { sendCustomerCancelled } = require('./_lib/email');
 
 const RATE_LIMIT = 20;
 const RATE_WINDOW_SECONDS = 60;
@@ -50,7 +51,7 @@ module.exports = async function handler(req, res) {
   const supabase = getSupabase();
   const { data: booking, error: fetchError } = await supabase
     .from('bookings')
-    .select('id, booking_ref, status')
+    .select('id, booking_ref, status, name, phone, email, date, start_time, end_time, duration_hours, selected_games')
     .eq('id', payload.bookingId)
     .single();
 
@@ -79,6 +80,12 @@ module.exports = async function handler(req, res) {
       page('Something went wrong', 'We could not cancel this booking. Please try again or contact the lounge.', false)
     );
     return;
+  }
+
+  try {
+    await sendCustomerCancelled({ ...booking, status: 'cancelled' });
+  } catch (err) {
+    console.error('Customer cancellation email failed:', err.message);
   }
 
   res.status(200).setHeader('Content-Type', 'text/html').send(

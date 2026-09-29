@@ -4,7 +4,7 @@ const { checkRateLimit } = require('./_lib/rateLimit');
 const { verifyTurnstile } = require('./_lib/turnstile');
 const { validateBookingInput } = require('./_lib/bookingRules');
 const { getSupabase } = require('./_lib/supabase');
-const { sendOwnerNotification, sendCustomerConfirmation } = require('./_lib/email');
+const { sendOwnerNotification, sendCustomerRequestReceived } = require('./_lib/email');
 
 const RATE_LIMIT = 5;
 const RATE_WINDOW_SECONDS = 60;
@@ -43,7 +43,7 @@ module.exports = async function handler(req, res) {
   // blindly fill every input will. Silently pretend success so scrapers
   // don't learn their submission was detected.
   if (typeof body.website === 'string' && body.website.trim() !== '') {
-    res.status(201).json({ booking_ref: generateBookingRef(), status: 'confirmed' });
+    res.status(201).json({ booking_ref: generateBookingRef(), status: 'pending' });
     return;
   }
 
@@ -83,7 +83,7 @@ module.exports = async function handler(req, res) {
         start_time: clean.startTime,
         duration_hours: clean.durationHours,
         end_time: clean.endTime,
-        status: 'confirmed',
+        status: 'pending',
         selected_games: selectedGames,
       })
       .select()
@@ -118,9 +118,9 @@ module.exports = async function handler(req, res) {
     console.error('Owner notification email failed:', err.message);
   }
   try {
-    await sendCustomerConfirmation(booking);
+    await sendCustomerRequestReceived(booking);
   } catch (err) {
-    console.error('Customer confirmation email failed:', err.message);
+    console.error('Customer request-received email failed:', err.message);
   }
 
   res.status(201).json({

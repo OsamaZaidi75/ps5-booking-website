@@ -446,9 +446,9 @@ function App() {
       {view === 'confirmation' && lastBooking && (
         <main className="section narrow">
           <div className="confirmation-card">
-            <span className="confirmation-icon">✓</span>
-            <p className="kicker">Booking confirmed</p>
-            <h2>You're all set, <em>{lastBooking.name}.</em></h2>
+            <span className="confirmation-icon">⏳</span>
+            <p className="kicker">Request received — pending lounge confirmation</p>
+            <h2>Almost there, <em>{lastBooking.name}.</em></h2>
             <p className="sub">Save your booking reference — you'll need it if you contact the lounge.</p>
             <div className="confirmation-ref">{lastBooking.booking_ref}</div>
             <div className="confirmation-details">
@@ -458,7 +458,8 @@ function App() {
               <div><span>Status</span><b className="confirmation-status">{lastBooking.status}</b></div>
             </div>
             <p className="confirmation-note">
-              Check your inbox for a confirmation email with this reference and a link to cancel if your plans change.
+              The lounge will review and confirm your session shortly. Check your inbox for an email with this
+              reference and a link to cancel if your plans change.
               Didn't provide an email? Just quote your reference number at the lounge.
             </p>
             <button className="btn btn-dark btn-lg" onClick={() => go('booking')}>Book another session →</button>

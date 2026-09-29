@@ -1,6 +1,7 @@
 const { applyCors } = require('../../_lib/cors');
 const { isAdminRequest } = require('../../_lib/auth');
 const { getSupabase } = require('../../_lib/supabase');
+const { sendCustomerConfirmed, sendCustomerCancelled } = require('../../_lib/email');
 
 const ALLOWED_STATUSES = ['pending', 'confirmed', 'cancelled'];
 
@@ -46,6 +47,18 @@ module.exports = async function handler(req, res) {
   if (!data) {
     res.status(404).json({ error: 'Booking not found.' });
     return;
+  }
+
+  // Notify the customer of the status change. Fire-and-forget — email
+  // failures must never break the admin action, the DB is already updated.
+  try {
+    if (status === 'confirmed') {
+      await sendCustomerConfirmed(data);
+    } else if (status === 'cancelled') {
+      await sendCustomerCancelled(data);
+    }
+  } catch (err) {
+    console.error('Admin status-change email failed:', err.message);
   }
 
   res.status(200).json(data);
